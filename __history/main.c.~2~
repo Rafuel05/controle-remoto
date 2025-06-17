@@ -1,0 +1,81 @@
+#include <16F877A.h>
+#device adc=8
+
+#FUSES NOWDT, HS, NOPUT, NOPROTECT
+#use delay(clock=6000000)
+
+// Definições dos pinos dos relés
+#define RELE1          PIN_D0   // IN1 do módulo relé
+#define RELE2          PIN_D1   // IN2 do módulo relé
+
+// Timeout do protocolo NEC (controle do kit usa NEC)
+#define NEC_TIMEOUT    4400
+
+unsigned int32 ir_code = 0;
+unsigned int8  bit_count = 0;
+unsigned int16 last_time = 0;
+int1 reading = 0;
+int1 rele1_estado = 0;
+int1 rele2_estado = 0;
+
+void aciona_rele(int1 *estado, int1 pino)
+{
+   *estado = !(*estado);
+   if(*estado)
+      output_low(pino);   // Relé liga com nível LOW
+   else
+      output_high(pino);  // Relé desliga com nível HIGH
+}
+
+#int_CCP1
+void CCP1_isr(void) 
+{
+   unsigned int16 current_time = CCP_1;
+   unsigned int16 pulse_time = current_time - last_time;
+   last_time = current_time;
+
+   // Início de uma nova transmissão (pulso longo)
+   if(pulse_time > NEC_TIMEOUT) {
+      bit_count = 0;
+      ir_code = 0;
+      reading = 1;
+      return;
+   }
+   
+   // Lê os bits do comando NEC
+   if(reading) {
+      if(pulse_time > 1000) { // Pulso longo = 1
+         bit_set(ir_code, (31 - bit_count));
+      }
+      // Pulso curto = 0 (não faz nada, bit já é zero)
+      bit_count++;
+      if(bit_count >= 32) {
+         reading = 0;
+         // Aqui você associa os códigos dos botões do controle
+         // Exemplo: botão "1" (pode mudar, veja dica abaixo)
+         switch(ir_code & 0xFF) { // Último byte do comando
+            case 0x45: aciona_rele(&rele1_estado, RELE1); break; // Botão 1
+            case 0x46: aciona_rele(&rele2_estado, RELE2); break; // Botão 2
+            // Adicione outros botões se quiser
+         }
+      }
+   }
+}
+
+void main()
+{
+   setup_adc_ports(NO_ANALOGS);
+   setup_timer_1(T1_INTERNAL|T1_DIV_BY_1);
+   setup_ccp1(CCP_CAPTURE_FE); // Captura borda de descida (falling edge)
+   
+   // Inicializa os relés desligados (HIGH)
+   output_high(RELE1);
+   output_high(RELE2);
+   
+   enable_interrupts(INT_CCP1);
+   enable_interrupts(GLOBAL);
+
+   while(true) {
+      // O processamento principal é feito via interrupção!
+   }
+}

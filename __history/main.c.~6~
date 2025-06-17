@@ -1,0 +1,87 @@
+#include <16F877A.h>
+#device ADC=16
+
+#FUSES NOWDT                    //No Watch Dog Timer
+#FUSES NOBROWNOUT               //No brownout reset
+#FUSES NOLVP                    //No low voltage prgming, B3(PIC16) or B5(PIC18) used for I/O
+
+#use delay(crystal=4000000)
+
+// Definições dos pinos
+#define IR_PIN      PIN_B0      // Pino do receptor IR
+#define RELE1_PIN   PIN_C0      // Pino do relé 1
+#define RELE2_PIN   PIN_C1      // Pino do relé 2
+
+// Variáveis globais
+unsigned int32 ir_value;        // Variável para armazenar o código IR
+int1 ir_flag = 0;              // Flag para indicar recebimento de código
+
+// Função para ler o código IR
+unsigned int32 read_ir_code() {
+   unsigned int32 code = 0;
+   int8 i;
+   
+   // Espera pelo start bit
+   while(input(IR_PIN) == 0);
+   delay_ms(9);
+   
+   // Lê os 32 bits
+   for(i = 0; i < 32; i++) {
+      while(input(IR_PIN) == 1);  // Espera bit começar
+      delay_us(500);
+      
+      if(input(IR_PIN) == 1) {    // Se ainda estiver em 1, é bit 1
+         bit_set(code, i);
+         delay_us(1000);
+      }
+      else {                      // Senão, é bit 0
+         delay_us(400);
+      }
+      
+      while(input(IR_PIN) == 0);  // Espera bit terminar
+   }
+   
+   return code;
+}
+
+void main() {
+   // Configuração dos pinos
+   set_tris_b(0b00000001);  // RB0 como entrada (IR)
+   set_tris_c(0b11111100);  // RC0 e RC1 como saída (Relés)
+   
+   // Inicialização das portas
+   output_c(0x00);          // Todos os pinos de PORTC em nível baixo
+   
+   while(TRUE) {
+      // Aguarda sinal do receptor IR
+      if(input(IR_PIN) == 0) {
+         ir_value = read_ir_code();
+         ir_flag = 1;
+      }
+      
+      // Se recebeu um código IR
+      if(ir_flag) {
+         // Para descobrir os códigos do seu controle, descomente estas linhas:
+         /*
+         output_high(RELE1_PIN);    // Pisca relé 1 para indicar recepção
+         delay_ms(100);
+         output_low(RELE1_PIN);
+         delay_ms(100);
+         */
+         
+         // Verifica qual botão foi pressionado
+         switch(ir_value) {
+            case 0xFF30CF:  // Exemplo: botão "1" - Controla Relé 1
+               output_toggle(RELE1_PIN);  // Inverte o estado do relé 1
+               break;
+               
+            case 0xFF18E7:  // Exemplo: botão "2" - Controla Relé 2
+               output_toggle(RELE2_PIN);  // Inverte o estado do relé 2
+               break;
+         }
+         
+         ir_flag = 0;       // Limpa a flag
+         delay_ms(200);     // Debounce
+      }
+   }
+}

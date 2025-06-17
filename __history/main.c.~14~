@@ -1,0 +1,118 @@
+#include <16F877A.h>
+#device ADC=16
+
+#FUSES NOWDT                    //No Watch Dog Timer
+#FUSES NOBROWNOUT               //No brownout reset
+#FUSES NOLVP                    //No low voltage prgming, B3(PIC16) or B5(PIC18) used for I/O
+
+#use delay(crystal=4000000)
+#use i2c(Master, Fast=100000, sda=PIN_C4, scl=PIN_C3, force_sw)  
+#include "i2c_Flex_LCD.c"
+
+// Definições dos pinos
+#define IR_PIN      PIN_B0      // Pino do receptor IR
+#define RELE1_PIN   PIN_D0      // Pino do relé 1
+#define RELE2_PIN   PIN_D1      // Pino do relé 2
+
+// Variáveis globais
+unsigned int16 ir_code[2];      // Array para armazenar o código IR (32 bits divididos em 2x16 bits)
+int1 ir_flag = 0;              // Flag para indicar recebimento de código
+
+// Função para ler pulso IR
+int1 read_ir_pulse(int16 timeout) {
+   int16 time = 0;
+   
+   // Aguarda enquanto o pino estiver em 1 (até timeout)
+   while(input(IR_PIN) && (time < timeout)) {
+      time++;
+      delay_us(50);
+   }
+   
+   if(time >= timeout) return 0;
+   
+   time = 0;
+   // Aguarda enquanto o pino estiver em 0 (até timeout)
+   while(!input(IR_PIN) && (time < timeout)) {
+      time++;
+      delay_us(50);
+   }
+   
+   return (time < timeout);
+}
+
+// Função para ler o código IR (Protocolo NEC)
+int1 read_ir_code() {
+   int8 i;
+   unsigned int16 temp_code[2] = {0, 0};
+   
+   // Aguarda pulso inicial (9ms)
+   if(!read_ir_pulse(200)) return 0;  // Timeout ~10ms
+   
+   // Aguarda espaço (4.5ms)
+   if(!read_ir_pulse(100)) return 0;  // Timeout ~5ms
+   
+   // Lê os 32 bits
+   for(i = 0; i < 32; i++) {
+      // Aguarda pulso de 562.5us
+      if(!read_ir_pulse(20)) return 0;  // Timeout ~1ms
+      
+      // Aguarda espaço (562.5us para 0, 1.6875ms para 1)
+      delay_us(400);  // Espera pelo meio do pulso
+      
+      // Se ainda estiver em 0, é bit 1
+      if(!input(IR_PIN)) {
+         if(i < 16) {
+            bit_set(temp_code[0], i);
+         } else {
+            bit_set(temp_code[1], i-16);
+         }
+      }
+      
+      // Aguarda fim do bit
+      read_ir_pulse(40);  // Timeout ~2ms
+   }
+   
+   // Copia os códigos se a leitura foi bem sucedida
+   ir_code[0] = temp_code[0];
+   ir_code[1] = temp_code[1];
+   
+   return 1;
+}
+
+void main() {
+   // Inicialização do LCD
+   lcd_init(0x4E, 16, 2);
+   lcd_backlight_led(ON);
+   
+   // Configuração dos pinos
+   set_tris_b(0b00000001);  // RB0 como entrada (IR)
+   set_tris_d(0b11111100);  // RD0 e RD1 como saída (Relés)
+   
+   // Inicialização das portas
+   output_d(0x00);          // Todos os pinos de PORTD em nível baixo
+   
+   // Mensagem inicial
+   printf(lcd_putc, "\f Remote Test");
+   delay_ms(1000);
+   printf(lcd_putc, "\nAguardando...");
+   
+   while(TRUE) {
+      // Aguarda sinal do receptor IR
+      if(input(IR_PIN) == 0) {
+         if(read_ir_code()) {
+            // Mostra o código no LCD
+            printf(lcd_putc, "\f Codigo: %04LX", ir_code[0]);
+            printf(lcd_putc, "\n %04LX", ir_code[1]);
+            
+            // Verifica qual botão foi pressionado
+            if(ir_code[0] == 0x30CF) {  // Exemplo: botão "1"
+               output_toggle(RELE1_PIN);
+            }
+            else if(ir_code[0] == 0x18E7) {  // Exemplo: botão "2"
+               output_toggle(RELE2_PIN);
+            }
+         }
+         delay_ms(100);  // Debounce
+      }
+   }
+}
